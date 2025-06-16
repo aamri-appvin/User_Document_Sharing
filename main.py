@@ -7,4 +7,3 @@ app = FastAPI()
 
 app.include_router(auth_routes)
 app.include_router(docs_routes)
-

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import io
 from typing import Optional
 from fastapi import Depends , HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from auth.dependency import get_current_user
 from cruds.upload_crud import get_content_type_from_file_type
@@ -79,35 +79,44 @@ def get_user_documents_by_id(doc_id : int , db: Session = Depends(get_db) , user
     
 
 
-def download_user_documents_by_id(
-    doc_id : int,
-    db: Session = Depends(get_db),
-    user = Depends(get_current_user)):
+async def download_user_documents_by_id(
+    doc_id: int,
+    db: Session,
+    user
+):
+    
+    doc = db.query(Documents).filter(
+        Documents.id == doc_id,
+        Documents.deleted_at == None
+    ).first()
 
-    doc = db.query(Documents).filter(Documents.id == doc_id, Documents.deleted_at == None).first()
+
     if not doc:
         raise HTTPException(404, DOCUMENT_NOT_FOUND)
-    
     if user.id != doc.user_id:
         raise HTTPException(403, UNAUTHORIZED)
-    
-    fernet = Fernet(os.getenv("ENCRYPTION_KEY"))
+
     UPLOAD_DIR = "uploads"
-        # file_id = str(uuid4())
-        # file_path = f"/uploads/{file.filename}"
-
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
     file_path = os.path.join(UPLOAD_DIR, doc.doc_name)
-
+    print("File Exists in **************", file_path)
     if not os.path.exists(file_path):
         raise HTTPException(404, FILE_NOT_FOUND)
-    
-    file_type = get_content_type_from_file_type(doc.type)
-    decrypted_data = fernet.decrypt(open(file_path, "rb").read())
-    return StreamingResponse(io.BytesIO(decrypted_data), media_type=file_type, headers={
-        "Content-Disposition": f"attachment; filename={doc.doc_name}"
-    })
-    
+
+    fernet = Fernet(os.getenv("ENCRYPTION_KEY"))
+    encrypted_data = open(file_path, "rb").read()
+    decrypted_data = fernet.decrypt(encrypted_data)
+
+
+    buffer = io.BytesIO(decrypted_data)
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type=get_content_type_from_file_type(doc.type),
+        headers={
+            "Content-Disposition": f'attachment; filename="{doc.doc_name}"'
+        }
+    )
 
 
 def share_doc_public_link(
@@ -117,6 +126,7 @@ def share_doc_public_link(
     exp: int = 10
 ):
     doc = db.query(Documents).filter(Documents.id == doc_id , Documents.deleted_at == None).first()
+
     if not doc:
         raise HTTPException(404, DOCUMENT_NOT_FOUND)
     
@@ -141,7 +151,8 @@ def download_file_from_public_link(
     token: str,
     db: Session = Depends(get_db)
 ):
-    access_link = db.query(AccessLink).filter(AccessLink.token == token).first()
+    access_link = db.query(AccessLink).filter(AccessLink.unique_token == token).first()
+
     print("=============ACCESS LINK=============",access_link)
     if not access_link:
         raise HTTPException(404, ACCESS_LINK_NOT_FOUND)
@@ -159,17 +170,19 @@ def download_file_from_public_link(
     if not doc:
         raise HTTPException(404, DOCUMENT_NOT_FOUND)
     
-    fernet = Fernet(os.getenv("ENCRPTION_KEY"))
-    file_path = f"/uploads/{doc.doc_name}"
+    fernet = Fernet(os.getenv("ENCRYPTION_KEY"))
 
-    if not os.path.exists(file_path):
-        raise HTTPException(404, FILE_NOT_FOUND)
+    file_path = os.path.join("uploads", doc.doc_name)
+    decrypted = fernet.decrypt(open(file_path, "rb").read())
     
-    decrypted_data = fernet.decrypt(open(file_path, "rb").read())
+    buffer = io.BytesIO(decrypted)
+    buffer.seek(0)
 
     access_link.downloaded = True
     db.commit()
 
-    return StreamingResponse(io.BytesIO(decrypted_data), media_type=doc.type, headers={
-        "Content-Disposition": f"attachment; filename={doc.doc_name}"
-    })
+    return StreamingResponse(
+        buffer,
+        media_type=get_content_type_from_file_type(doc.type),
+        headers={"Content-Disposition": f'attachment; filename="{doc.doc_name}"'}
+    )

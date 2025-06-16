@@ -1,6 +1,7 @@
 
 from typing import Optional
 from fastapi import APIRouter , UploadFile , Depends , HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 from auth.dependency import get_current_user
@@ -34,7 +35,7 @@ user = Depends(get_current_user)):
 
     return success_response(result , FETCHED_THE_DATA_SUCCESSFULLY , 200)
 
-@router.get("/{id}")
+@router.get("/{doc_id}")
 def get_documents_by_id(doc_id : int,db: Session = Depends(get_db),user = Depends(get_current_user)):
 
     results = get_user_documents_by_id(doc_id , db , user)
@@ -42,13 +43,13 @@ def get_documents_by_id(doc_id : int,db: Session = Depends(get_db),user = Depend
     return success_response(results , FETCHED_THE_DATA_SUCCESSFULLY , 200)
 
 
-@router.get("/{id}/download")
-def download_doc_by_id(doc_id : int,db: Session = Depends(get_db),user = Depends(get_current_user)):
+@router.get("/{doc_id}/download")
+async def download_doc_by_id(doc_id : int,db: Session = Depends(get_db),user = Depends(get_current_user)):
+    return await download_user_documents_by_id(doc_id, db, user)
+    # results = download_user_documents_by_id(doc_id , db , user)
 
-    results = download_user_documents_by_id(doc_id , db , user)
 
-
-@router.post("/{id}/share")
+@router.post("/{doc_id}/share")
 def share_public_link(
     doc_id : int,
     db: Session = Depends(get_db),
@@ -59,12 +60,13 @@ def share_public_link(
     results = share_doc_public_link( doc_id , db , user , exp )
     return success_response(results , GENERATED_PUBLIC_LINK , 201)
 
-
-@router.get("/access-link/{doc_id}/{token}/download/")
-def download_from_public_link(
+@router.get("/{doc_id}/{token}/download", response_class=StreamingResponse)
+async def download_from_public_link(
+    doc_id: int,
     token: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    print("===========SHARABLE PUBLIC LINK===========")
-    results = download_file_from_public_link(token , db)
-    # /access-link/2/27ca19a8-b818-408c-91ec-583f5e274f22/download/
+    print("PUBLIC LINK DOWNLOAD:", doc_id, token)
+    return download_file_from_public_link(token, db)
+
+
